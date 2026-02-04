@@ -4,3 +4,6 @@ djangorestframework
 django-admin-interface
 django-colorfield
 django-environ
+whitenoise
+celery
+redis
