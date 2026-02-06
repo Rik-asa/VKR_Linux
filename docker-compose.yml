@@ -1,0 +1,46 @@
+version: '5.0'
+#'3.8', лучше не указывать вообще версию
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: kpi_postgres
+    restart: unless-stopped
+    env_file:
+      - .env  # ← берем из .env
+    environment:
+      POSTGRES_DB: ${DB_NAME:}
+      POSTGRES_USER: ${DB_USER:}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    # pg_cron требует shared_preload_libraries
+    command: 
+      - "postgres"
+      - "-c"
+      - "shared_preload_libraries=pg_cron"
+      - "-c"
+      - "cron.database_name=${DB_NAME:-kpi}"
+
+  web:
+    build: .
+    container_name: kpi_django
+    restart: unless-stopped
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env  # Все переменные из файла
+    depends_on:
+      - postgres:
+    #command: >
+    #  sh -c "python manage.py migrate &&
+    #         python manage.py runserver 0.0.0.0:8000"
+    command: python manage.py runserver 0.0.0.0:8000
+
+volumes:
+  postgres_data: # том для данных БД

@@ -1,0 +1,9 @@
+Django
+psycopg2-binary
+djangorestframework
+django-admin-interface
+django-colorfield
+django-environ
+whitenoise
+celery
+redis
