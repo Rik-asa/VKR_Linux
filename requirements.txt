@@ -7,3 +7,5 @@ django-environ
 whitenoise
 celery
 redis
+django[argon2]
+argon2-cffi

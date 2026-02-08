@@ -28,7 +28,7 @@ if IS_CONFIGURED:
     # РЕЖИМ РАБОТЫ СИСТЕМЫ (после настройки)
     # ==========================================
     DEBUG = os.environ.get('DEBUG', 'False').lower() == 'true'
-    ALLOWED_HOSTS = ['localhost', '127.0.0.1']
+    ALLOWED_HOSTS = ['localhost', '127.0.0.1', '*']
     
      # Загружаем SECRET_KEY из .env
     import environ
@@ -76,7 +76,7 @@ else:
     # РЕЖИМ МАСТЕРА НАСТРОЙКИ (первый запуск)
     # ==========================================
     DEBUG = True
-    ALLOWED_HOSTS = ['localhost', '127.0.0.1']
+    ALLOWED_HOSTS = ['localhost', '127.0.0.1', '*']
     SECRET_KEY = 'temporary-key-for-setup-only'
     
     # Только минимальные приложения для мастера
