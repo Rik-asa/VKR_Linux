@@ -6,8 +6,6 @@ from django.contrib.auth.decorators import login_required
 from django.db import connection
 from django.utils import timezone
 from datetime import datetime
-from integration.models import MisImportedDoctor, MisImportedSpecialization, MisImportedPurpose, MisImportedMan
-from kpi_calc.views import dynamic_plan_fact_view
 from apps.core.db_utils import get_months_from_db, get_month_name
 
 @login_required
@@ -98,130 +96,6 @@ def dashboard_home(request):
     }
     
     return render(request, 'dashboard/accountant_dashboard.html', context)
-    
-
-@login_required
-def doctor_dashboard(request):
-    """Дашборд для врача с данными сравнения план-факт"""
-    
-    # Определяем текущего врача из данных пользователя
-    man_id = request.user.manid if request.user.manid else None
-    
-    if not man_id:
-        return render(request, 'dashboard/access_denied.html', {
-            'message': 'У вашего аккаунта не привязан ID врача из МИС'
-        })
-
-    # Получаем имя врача из таблицы man
-    doctor_name = "Неизвестный врач"
-    try:
-        man = MisImportedMan.objects.filter(manidmis=man_id).first()
-        if man and man.text:
-            doctor_name = man.text
-    except:
-        pass
-
-    # Параметры из GET-запроса
-    year = request.GET.get('year', datetime.now().year)
-    month = request.GET.get('month', datetime.now().month)
-    
-    try:
-        year = int(year)
-        month = int(month)
-    except (ValueError, TypeError):
-        year = datetime.now().year
-        month = datetime.now().month
-    
-    columns = []
-    data = []
-    
-    try:
-        with connection.cursor() as cursor:
-            # Используем процедуру сравнения план-факт с фильтром по врачу
-            query = """
-                SELECT * FROM kpi.get_monthly_plan_fact_comparison(%s, %s, %s, NULL, NULL)
-            """
-            cursor.execute(query, [year, month, man_id])
-            
-            if cursor.description:
-                columns = [col[0] for col in cursor.description]
-                results = cursor.fetchall()
-            
-                for row in results:
-                    row_dict = {}
-                    for i, value in enumerate(row):
-                        col_name = columns[i] if i < len(columns) else f'col_{i}'
-                        row_dict[col_name] = value
-                    data.append(row_dict)
-    except Exception as e:
-        print(f"Ошибка при получении данных план-факт: {e}")
-    
-    # Получаем данные для выпадающих списков
-    doctors_data = []
-    specializations_data = []
-    purposes_data = []
-
-    try:
-        # Врачи
-        for man in MisImportedMan.objects.all().order_by('text')[:50]:  # Ограничиваем
-            if man.text and man.manidmis:
-                doctors_data.append({
-                    'id': man.manidmis,
-                    'name': f"{man.text} (ID: {man.manidmis})"
-                })
-    except Exception as e:
-        print(f"Ошибка при получении врачей: {e}")
-
-    try:
-        # Специальности
-        for spec in MisImportedSpecialization.objects.all().order_by('text'):
-            specializations_data.append({
-                'id': spec.code,
-                'name': f"{spec.text} (код: {spec.code})"
-            })
-    except Exception as e:
-        print(f"Ошибка при получении специальностей: {e}")
-
-    try:
-        # Цели визитов
-        for purpose in MisImportedPurpose.objects.all().order_by('text'):
-            purposes_data.append({
-                'id': purpose.code,
-                'name': f"{purpose.text} (код: {purpose.code})"
-            })
-    except Exception as e:
-        print(f"Ошибка при получении целей визитов: {e}")
-
-    context = {
-        'year': year,
-        'month': month,
-        'columns': columns,
-        'data': data,
-        'total': len(data),
-        'doctor_id': man_id,
-        'doctor_name': doctor_name,
-        'is_doctor_dashboard': True,
-        'form_filters': {
-            'man_id': str(man_id),
-            'specid': '',
-            'plan_vistype': '',
-        },
-        # Данные для выпадающих списков
-        'doctors': doctors_data,
-        'specializations': specializations_data,
-        'purposes': purposes_data,
-        'months': get_months_from_db(),
-        'years': range(2025, datetime.now().year + 1),
-        'current_user': request.user,
-        'is_doctor_user': True,  #флаг что это врач
-    }
-    
-    return render(request, 'kpi_calc/dynamic_comparison.html', context)
-
-def redirect_to_admin(request):
-    """Редирект на стандартную админку Django."""
-    return redirect('/admin/')
-
 
 #умная фильтрация
 @login_required
@@ -302,7 +176,7 @@ def unified_plan_fact(request):
     except Exception as e:
         print(f"❌ Ошибка SQL: {e}")
     
-    # ДАННЫЕ ДЛЯ ФИЛЬТРОВ (только нужное)
+    # ДАННЫЕ ДЛЯ ФИЛЬТРОВ (напрямую из БД)
     doctors_data = []
     specializations_data = []
     purposes_data = []
@@ -310,32 +184,50 @@ def unified_plan_fact(request):
     # Врачи: ТОЛЬКО для заведующих
     if is_manager:
         try:
-            for man in MisImportedMan.objects.all().order_by('text')[:100]:
-                if man.text and man.manidmis:
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT manidmis, text 
+                    FROM solution_med.import_man 
+                    WHERE text IS NOT NULL 
+                    ORDER BY text
+                """)
+                for row in cursor.fetchall():
                     doctors_data.append({
-                        'id': man.manidmis,
-                        'name': f"{man.text}"
+                        'id': row[0],
+                        'name': row[1]
                     })
         except Exception:
             pass
     
     # Специальности: для всех
     try:
-        for spec in MisImportedSpecialization.objects.all().order_by('text'):
-            specializations_data.append({
-                'id': spec.keyidmis,
-                'name': spec.text
-            })
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT keyidmis, text, code 
+                FROM kpi.specialities 
+                ORDER BY text
+            """)
+            for row in cursor.fetchall():
+                specializations_data.append({
+                    'id': row[0],
+                    'name': f"{row[1]} (код: {row[2]})"
+                })
     except Exception:
         pass
     
     # Цели: для всех
     try:
-        for purpose in MisImportedPurpose.objects.all().order_by('text'):
-            purposes_data.append({
-                'id': purpose.code,
-                'name': purpose.text
-            })
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT code, text 
+                FROM kpi.purposes 
+                ORDER BY text
+            """)
+            for row in cursor.fetchall():
+                purposes_data.append({
+                    'id': row[0],
+                    'name': f"{row[1]} (код: {row[0]})"
+                })
     except Exception:
         pass
     
@@ -371,13 +263,13 @@ def unified_plan_fact(request):
         
         # Списки
         'months': get_months_from_db(),
-        'years': range(2024, datetime.now().year + 2),
+        'years': range(2025, datetime.now().year + 2),
         
         # Заголовок страницы
         'page_title': 'Сравнение план-факт' if is_manager else 'Мои показатели',
     }
     
-    return render(request, 'kpi_calc/dynamic_comparison.html', context)
+    return render(request, 'dashboard/dynamic_comparison.html', context)
 
 def smart_redirect(request):
     """

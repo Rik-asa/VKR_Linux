@@ -1,0 +1,44 @@
+<!-- apps/plans/templates/admin/plans_bulk_delete.html -->
+
+{% extends "admin/base_site.html" %}
+
+{% block content %}
+<div id="content-main">
+    <h1>Массовое удаление планов</h1>
+    
+    <div style="background: #fff3cd; color: #856404; padding: 20px; margin: 20px 0; border-radius: 8px; border: 1px solid #ffeeba;">
+        <strong>⚠️ Внимание!</strong> Это действие нельзя отменить.
+    </div>
+    
+    <form method="post" onsubmit="return confirm('Вы уверены?')">
+        {% csrf_token %}
+        
+        <div style="background: #f8f8f8; padding: 20px; border-radius: 8px;">
+            <div style="margin-bottom: 15px;">
+                <label style="font-weight: bold; display: block; margin-bottom: 5px;">Год:</label>
+                <select name="year" required style="padding: 8px; width: 200px;">
+                    <option value="">-- Выберите год --</option>
+                    {% for year in years %}
+                    <option value="{{ year }}">{{ year }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            
+            <div style="margin-bottom: 15px;">
+                <label style="font-weight: bold; display: block; margin-bottom: 5px;">Специальность (необязательно):</label>
+                <select name="specid" style="padding: 8px; width: 300px;">
+                    <option value="">-- Все специальности --</option>
+                    {% for spec in specializations %}
+                    <option value="{{ spec.0 }}">{{ spec.1 }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+        
+        <div class="submit-row" style="margin-top: 20px;">
+            <input type="submit" value="🗑️ Удалить" class="default" style="background: #dc3545;">
+            <a href=".." class="closelink">Отмена</a>
+        </div>
+    </form>
+</div>
+{% endblock %}

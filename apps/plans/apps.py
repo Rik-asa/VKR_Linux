@@ -1,8 +1,8 @@
-#apps\plans\apps.py
+# apps/plans/apps.py
 
 from django.apps import AppConfig
 
 class PlansConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'
     name = 'plans'
-    verbose_name = 'Планы'
+    verbose_name = 'Управление планами'

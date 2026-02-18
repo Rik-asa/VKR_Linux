@@ -87,14 +87,19 @@ class User(AbstractBaseUser):
     
     def get_full_name(self):
         # Пытаемся получить имя из таблицы man по manid
-        try:
-            from integration.models import MisImportedMan
-            if self.manid:
-                man = MisImportedMan.objects.filter(manidmis=self.manid).first()
-                if man and man.text:
-                    return man.text
-        except:
-            pass
+        if self.manid:
+            try:
+                from django.db import connection
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT text FROM solution_med.import_man WHERE manidmis = %s",
+                        [self.manid]
+                    )
+                    result = cursor.fetchone()
+                    if result:
+                        return result[0]
+            except:
+                pass
         return self.login
     
     def get_short_name(self):

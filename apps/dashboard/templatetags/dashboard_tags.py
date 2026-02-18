@@ -1,4 +1,4 @@
-# apps/kpi_calc/templatetags/kpi_tags.py
+# apps/dashboard/templatetags/dashboard_tags.py
 
 from django import template
 

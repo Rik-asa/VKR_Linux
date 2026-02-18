@@ -52,11 +52,8 @@ if IS_CONFIGURED:
     
     # Мои приложения
     'users.apps.UsersConfig',
-    'references',
-    'plans',
-    'integration',
-    'kpi_calc',
     'dashboard',
+    'plans',
     'setup',  # ← ТОЛЬКО ОДИН РАЗ!
     
     # Сторонние
