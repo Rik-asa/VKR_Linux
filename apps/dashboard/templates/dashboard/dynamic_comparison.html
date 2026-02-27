@@ -80,17 +80,23 @@
                         {% endfor %}
                     </select>
                 </div>
-                <div class="col-12 col-md-3">
-                    <label class="form-label">Цель визита</label>
-                    <select name="plan_vistype" class="form-select form-select-sm">
-                        <option value="">Все цели</option>
+                <<div class="col-12">
+                    <label class="form-label">🎯 Цель визита</label>
+                    <div class="border rounded p-2" style="max-height: 250px; overflow-y: auto;">
+                        <div class="form-check py-1">
+                            <input class="form-check-input" type="checkbox" name="stat_purpose_codes" value="" id="all_purposes"
+                                {% if not form_filters.stat_purpose_codes %}checked{% endif %}>
+                            <label class="form-check-label" for="all_purposes">📋 Все цели</label>
+                        </div>
                         {% for purpose in purposes %}
-                        <option value="{{ purpose.id }}" 
-                                {% if form_filters.plan_vistype == purpose.id|stringformat:"i" %}selected{% endif %}>
-                            {{ purpose.name }}
-                        </option>
+                        <div class="form-check py-1">
+                            <input class="form-check-input" type="checkbox" name="stat_purpose_codes" value="{{ purpose.id }}" 
+                                id="purpose_{{ purpose.id }}"
+                                {% if purpose.id in form_filters.stat_purpose_codes %}checked{% endif %}>
+                            <label class="form-check-label" for="purpose_{{ purpose.id }}">{{ purpose.name }}</label>
+                        </div>
                         {% endfor %}
-                    </select>
+                    </div>
                 </div>
                 {% endif %}
 
@@ -151,6 +157,18 @@
                     </tbody>
                 </table>
             </div>
+
+            <script>
+                // Всегда показываем горизонтальный скролл
+                document.addEventListener('DOMContentLoaded', function() {
+                    const container = document.querySelector('.table-responsive');
+                    if (container) {
+                        container.style.overflowX = 'scroll';
+                        container.style.overflowY = 'auto';
+                        container.style.maxHeight = 'calc(100vh - 250px)';
+                    }
+                });
+            </script>
             
             <!-- Информация о колонках -->
             <div class="mt-3 text-muted small">
@@ -256,6 +274,13 @@
         display: block;
         margin-top: 3px;
         color: #6c757d;
+    }
+
+    .table-responsive thead th {
+        position: sticky;
+        top: 0;
+        background: #f8f9fa;
+        z-index: 1;
     }
 </style>
 

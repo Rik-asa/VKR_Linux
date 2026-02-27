@@ -146,10 +146,15 @@ def unified_plan_fact(request):
         man_id = doctor_man_id  # Автоматически для врача
     
     specid_param = request.GET.get('specid', '').strip()
-    plan_vistype_param = request.GET.get('plan_vistype', '').strip()
     
     specid = int(specid_param) if specid_param else None
-    plan_vistype = int(plan_vistype_param) if plan_vistype_param else None
+    stat_purpose_codes = request.GET.getlist('stat_purpose_codes')  # для множественного выбора
+    
+    # Очищаем от пустых значений
+    stat_purpose_codes = [code for code in stat_purpose_codes if code and code.strip()]
+
+    if not stat_purpose_codes or stat_purpose_codes == ['']:
+        stat_purpose_codes = None
     
     # Вызов хранимой процедуры
     columns = []
@@ -158,12 +163,14 @@ def unified_plan_fact(request):
     try:
         with connection.cursor() as cursor:
             query = "SELECT * FROM kpi.get_monthly_plan_fact_comparison(%s, %s, %s, %s, %s)"
-            cursor.execute(query, [year, month, man_id, specid, plan_vistype])
+            
+            purpose_param = stat_purpose_codes if stat_purpose_codes and stat_purpose_codes != [''] else None
+            
+            cursor.execute(query, [year, month, man_id, specid, purpose_param])
             
             if cursor.description:
                 columns = [col[0] for col in cursor.description]
-            
-            results = cursor.fetchall()
+                results = cursor.fetchall()
             
             # Преобразуем в словари
             for row in results:
@@ -210,7 +217,7 @@ def unified_plan_fact(request):
             for row in cursor.fetchall():
                 specializations_data.append({
                     'id': row[0],
-                    'name': f"{row[1]} (код: {row[2]})"
+                    'name': f"{row[1]} "
                 })
     except Exception:
         pass
@@ -219,14 +226,14 @@ def unified_plan_fact(request):
     try:
         with connection.cursor() as cursor:
             cursor.execute("""
-                SELECT code, text 
-                FROM kpi.purposes 
-                ORDER BY text
+                SELECT DISTINCT stat_purpose_code, stat_purpose_name
+                FROM kpi.stat_purpose_mapping
+                ORDER BY stat_purpose_name
             """)
             for row in cursor.fetchall():
                 purposes_data.append({
                     'id': row[0],
-                    'name': f"{row[1]} (код: {row[0]})"
+                    'name': f"{row[1]}"
                 })
     except Exception:
         pass
@@ -253,7 +260,7 @@ def unified_plan_fact(request):
         'form_filters': {
             'man_id': str(man_id) if man_id else '',
             'specid': str(specid) if specid else '',
-            'plan_vistype': str(plan_vistype) if plan_vistype else '',
+            'stat_purpose_codes': stat_purpose_codes if stat_purpose_codes else [], 
         },
 
         # Фильтры

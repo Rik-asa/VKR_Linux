@@ -13,11 +13,11 @@ import io
 # ==================== МОДЕЛЬ ====================
 from django.db import models
 
-class KpiPlan(models.Model):
-    """Минимальная модель для админки"""
+class StatPlan(models.Model):
+    """Модель для статистических планов (kpi.stat_plans)"""
     keyid = models.BigAutoField(primary_key=True)
     specid = models.IntegerField(verbose_name='ID специальности')
-    plan_vistype = models.IntegerField(verbose_name='ID цели визита')
+    stat_purpose_code = models.CharField(max_length=50, verbose_name='Код статистической цели')
     plan_value = models.IntegerField(verbose_name='Плановое значение')
     year = models.IntegerField(verbose_name='Год')
     created_at = models.DateTimeField(auto_now_add=True)
@@ -25,13 +25,13 @@ class KpiPlan(models.Model):
 
     class Meta:
         managed = False
-        db_table = 'kpi"."plans'
-        unique_together = [['year', 'specid', 'plan_vistype']]
+        db_table = 'kpi\".\"stat_plans'
+        unique_together = [['year', 'specid', 'stat_purpose_code']]
         verbose_name = 'План KPI'
         verbose_name_plural = 'Планы KPI'
 
     def __str__(self):
-        return f"{self.year} - {self.get_spec_name()} - {self.get_purpose_name()}"
+        return f"{self.year} - {self.get_spec_name()} - {self.stat_purpose_code}"
 
     def get_spec_name(self):
         with connection.cursor() as cursor:
@@ -45,27 +45,23 @@ class KpiPlan(models.Model):
     def get_purpose_name(self):
         with connection.cursor() as cursor:
             cursor.execute(
-                "SELECT text FROM kpi.purposes WHERE code = %s",
-                [self.plan_vistype]
+                "SELECT stat_purpose_name FROM kpi.stat_purpose_mapping WHERE stat_purpose_code = %s",
+                [self.stat_purpose_code]
             )
             result = cursor.fetchone()
-            return result[0] if result else f"Цель: {self.plan_vistype}"
-
-    def monthly_plan(self):
-        import math
-        return math.floor(self.plan_value / 12)
+            return result[0] if result else self.stat_purpose_code
 
 
 # ==================== ФОРМА ====================
-class KpiPlanForm(forms.ModelForm):
+class StatPlanForm(forms.ModelForm):
     class Meta:
-        model = KpiPlan
-        fields = ['year', 'specid', 'plan_vistype', 'plan_value']
+        model = StatPlan
+        fields = ['year', 'specid', 'stat_purpose_code', 'plan_value']
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         
-        # Загружаем специальности
+        # Специальности
         with connection.cursor() as cursor:
             cursor.execute("SELECT keyidmis, text FROM kpi.specialities ORDER BY text")
             spec_choices = [('', '--- Выберите специальность ---')]
@@ -73,27 +69,26 @@ class KpiPlanForm(forms.ModelForm):
                 spec_choices.append((str(row[0]), row[1]))
             self.fields['specid'].widget = forms.Select(choices=spec_choices)
         
-        # Загружаем цели
+        # Статистические цели из mapping
         with connection.cursor() as cursor:
-            cursor.execute("SELECT code, text FROM kpi.purposes ORDER BY text")
-            purpose_choices = [('', '--- Выберите цель визита ---')]
+            cursor.execute("""
+                SELECT DISTINCT stat_purpose_code, stat_purpose_name
+                FROM kpi.stat_purpose_mapping
+                ORDER BY stat_purpose_name
+            """)
+            purpose_choices = [('', '--- Выберите цель ---')]
             for row in cursor.fetchall():
-                purpose_choices.append((str(row[0]), row[1]))
-            self.fields['plan_vistype'].widget = forms.Select(choices=purpose_choices)
-        
-        self.fields['specid'].label = 'Специальность'
-        self.fields['plan_vistype'].label = 'Цель визита'
-        self.fields['plan_value'].label = 'Плановое значение (год)'
-        self.fields['year'].label = 'Год'
+                purpose_choices.append((row[0], f"{row[1]} ({row[0]})"))
+            self.fields['stat_purpose_code'].widget = forms.Select(choices=purpose_choices)
 
 
 # ==================== АДМИНКА ====================
-@admin.register(KpiPlan)
-class KpiPlanAdmin(admin.ModelAdmin):
-    form = KpiPlanForm
-    list_display = ['year', 'get_spec_name', 'get_purpose_name', 'plan_value', 'monthly_plan_display']
+@admin.register(StatPlan)
+class StatPlanAdmin(admin.ModelAdmin):
+    form = StatPlanForm
+    list_display = ['year', 'get_spec_name', 'get_purpose_name', 'plan_value']
     list_filter = ['year']
-    search_fields = ['specid', 'plan_vistype']
+    search_fields = ['specid', 'stat_purpose_code']
     list_editable = ['plan_value']
     actions = ['export_as_csv']
 
@@ -158,12 +153,12 @@ class KpiPlanAdmin(admin.ModelAdmin):
                     for row in reader:
                         try:
                             cursor.execute("""
-                                INSERT INTO kpi.plans (year, specid, plan_vistype, plan_value)
+                                INSERT INTO kpi.stat_plans (year, specid, stat_purpose_code, plan_value)
                                 VALUES (%s, %s, %s, %s)
-                                ON CONFLICT (year, specid, plan_vistype) 
+                                ON CONFLICT (year, specid, stat_purpose_code) 
                                 DO UPDATE SET plan_value = EXCLUDED.plan_value,
                                              updated_at = NOW()
-                            """, [row['year'], row['specid'], row['plan_vistype'], row['plan_value']])
+                            """, [row['year'], row['specid'], row['stat_purpose_code'], row['plan_value']])
                             success += 1
                         except Exception:
                             errors += 1
@@ -185,10 +180,10 @@ class KpiPlanAdmin(admin.ModelAdmin):
         response['Content-Disposition'] = 'attachment; filename="all_plans.csv"'
         
         writer = csv.writer(response)
-        writer.writerow(['year', 'specid', 'plan_vistype', 'plan_value', 'created_at', 'updated_at'])
+        writer.writerow(['year', 'specid', 'stat_purpose_code', 'plan_value', 'created_at', 'updated_at'])
         
         with connection.cursor() as cursor:
-            cursor.execute("SELECT year, specid, plan_vistype, plan_value, created_at, updated_at FROM kpi.plans ORDER BY year DESC, specid, plan_vistype")
+            cursor.execute("SELECT year, specid, plan_vistat_purpose_codestype, plan_value, created_at, updated_at FROM kpi.stat_plans ORDER BY year DESC, specid, stat_purpose_code")
             writer.writerows(cursor.fetchall())
         
         return response
@@ -201,10 +196,10 @@ class KpiPlanAdmin(admin.ModelAdmin):
             
             with connection.cursor() as cursor:
                 if year and specid:
-                    cursor.execute("DELETE FROM kpi.plans WHERE year = %s AND specid = %s", [year, specid])
+                    cursor.execute("DELETE FROM kpi.stat_plans WHERE year = %s AND specid = %s", [year, specid])
                     messages.success(request, f'✅ Удалены планы за {year} год для специальности {specid}')
                 elif year:
-                    cursor.execute("DELETE FROM kpi.plans WHERE year = %s", [year])
+                    cursor.execute("DELETE FROM kpi.stat_plans WHERE year = %s", [year])
                     messages.success(request, f'✅ Удалены все планы за {year} год')
                 else:
                     messages.error(request, '❌ Укажите год для удаления')
@@ -212,7 +207,7 @@ class KpiPlanAdmin(admin.ModelAdmin):
             return redirect('..')
         
         with connection.cursor() as cursor:
-            cursor.execute("SELECT DISTINCT year FROM kpi.plans ORDER BY year DESC")
+            cursor.execute("SELECT DISTINCT year FROM kpi.stat_plans ORDER BY year DESC")
             years = [row[0] for row in cursor.fetchall()]
             
             cursor.execute("SELECT keyidmis, text FROM kpi.specialities ORDER BY text")
