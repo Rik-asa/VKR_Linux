@@ -109,12 +109,16 @@ def unified_plan_fact(request):
     
     # 1. Получаем все активные отчеты
     with connection.cursor() as cursor:
-        cursor.execute("""
+        query = """
             SELECT id, report_code, report_name, sql_function_name
             FROM kpi.reports
             WHERE is_active = true
-            ORDER BY sort_order
-        """)
+        """
+        if not (user.is_accountant() or user.is_superuser):
+            query += " AND available_for_doctors = true"
+        query += " ORDER BY sort_order"
+        cursor.execute(query)
+
         reports = []
         for row in cursor.fetchall():
             reports.append({
@@ -172,7 +176,7 @@ def unified_plan_fact(request):
         
         filters_config = cursor.fetchall()
     
-    # 4. Собираем данные для фильтров
+    # 4. Собираем данные для фильтров (для шаблона)
     filters_for_template = []
     
     for fc in filters_config:
@@ -205,38 +209,47 @@ def unified_plan_fact(request):
                 filter_info['options'] = []
         
         filters_for_template.append(filter_info)
+
+    # === СБОР ЗНАЧЕНИЙ ФИЛЬТРОВ (ТОЛЬКО ОДИН РАЗ) ===
+    filter_values = {}
     
-    # === НОВАЯ ЧАСТЬ: ВЫЗОВ SQL ФУНКЦИИ ===
+    for fc in filters_config:
+        param_name = fc[11]  # param_name (p_year, p_month и т.д.)
+        filter_code = fc[0]   # filter_code (year, month и т.д.)
+        is_multiple = fc[9]    # is_multiple
+        
+        if is_multiple:
+            values = request.GET.getlist(filter_code)
+            if values:
+                filter_values[param_name] = values
+        else:
+            value = request.GET.get(filter_code)
+            if value:
+                filter_values[param_name] = value
+    
+    # Если пользователь - врач (не заведующий и не суперюзер)
+    if not (user.is_accountant() or user.is_superuser):
+        # Проверяем, есть ли в этом отчете фильтр по врачу
+        has_doctor_filter = any(fc[0] == 'doctor' for fc in filters_config)
+        
+        if has_doctor_filter and user.manid:
+            # Принудительно подставляем ID врача
+            filter_values['p_man_id'] = user.manid
+    
+    # Если есть год и месяц в фильтрах, убедимся что они есть
+    if 'year' in [fc[0] for fc in filters_config] and 'p_year' not in filter_values:
+        filter_values['p_year'] = datetime.now().year
+    if 'month' in [fc[0] for fc in filters_config] and 'p_month' not in filter_values:
+        filter_values['p_month'] = datetime.now().month
+    
+    # === ВЫЗОВ SQL ФУНКЦИИ ===
     data = []
     columns = []
     
     try:
-        # Собираем значения фильтров из GET
-        filter_values = {}
-        for fc in filters_config:
-            param_name = fc[11]  # param_name (p_year, p_month и т.д.)
-            filter_code = fc[0]   # filter_code (year, month и т.д.)
-            is_multiple = fc[9]    # is_multiple
-            
-            if is_multiple:
-                values = request.GET.getlist(filter_code)
-                if values:
-                    filter_values[param_name] = values
-            else:
-                value = request.GET.get(filter_code)
-                if value:
-                    filter_values[param_name] = value
-        
-        # Если есть год и месяц в фильтрах, убедимся что они есть
-        # (на случай если пользователь ничего не выбрал)
-        if 'year' in [fc[0] for fc in filters_config] and 'p_year' not in filter_values:
-            filter_values['p_year'] = datetime.now().year
-        if 'month' in [fc[0] for fc in filters_config] and 'p_month' not in filter_values:
-            filter_values['p_month'] = datetime.now().month
-        
         # Преобразуем в JSON
         filter_json = json.dumps(filter_values, ensure_ascii=False)
-                
+        
         # Вызываем функцию
         with connection.cursor() as cursor:
             cursor.execute(
@@ -253,10 +266,8 @@ def unified_plan_fact(request):
                     data.append(row_dict)
     
     except Exception as e:
-        print(f"Ошибка при выполнении SQL функции: {e}")
         import traceback
         traceback.print_exc()
-    # ======================================
     
     # 5. Контекст для шаблона
     context = {
