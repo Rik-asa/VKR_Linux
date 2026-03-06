@@ -7,6 +7,7 @@ from django.db import connection
 from django.utils import timezone
 from datetime import datetime
 from apps.core.db_utils import get_months_from_db, get_month_name
+from django.http import JsonResponse
 
 @login_required
 def dashboard_home(request):
@@ -101,179 +102,174 @@ def dashboard_home(request):
 @login_required
 def unified_plan_fact(request):
     """
-    ЕДИНАЯ страница сравнения план-факт.
-    Рендерит dynamic_comparison.html напрямую.
+    УНИВЕРСАЛЬНАЯ страница отчетов.
+    Все настройки берутся из БД (таблицы reports, report_filters, filter_types)
     """
     user = request.user
     
-    # Определяем роль
-    is_manager = user.is_accountant() or user.is_superuser
-
-    # ИНИЦИАЛИЗИРУЕМ переменные для всех случаев
-    doctor_man_id = None
-    doctor_name = ""
-    
-    # Для врача: получаем его данные
-    if not is_manager:
-        doctor_man_id = user.manid
-        if not doctor_man_id:
-            return render(request, 'dashboard/access_denied.html', {
-                'message': 'У вашего аккаунта не привязан ID врача из МИС'
+    # 1. Получаем все активные отчеты
+    with connection.cursor() as cursor:
+        cursor.execute("""
+            SELECT id, report_code, report_name, sql_function_name
+            FROM kpi.reports
+            WHERE is_active = true
+            ORDER BY sort_order
+        """)
+        reports = []
+        for row in cursor.fetchall():
+            reports.append({
+                'id': row[0],
+                'code': row[1],
+                'name': row[2],
+                'func': row[3]
             })
     
-    # Параметры из GET (с умолчаниями)
-    current_year = datetime.now().year
-    current_month = datetime.now().month
+    if not reports:
+        return render(request, 'dashboard/access_denied.html', {
+            'message': 'В системе не настроено ни одного отчета'
+        })
     
-    year = request.GET.get('year', current_year)
-    month = request.GET.get('month', current_month)
-    
-    # Конвертация
+    # 2. Определяем текущий отчет (из GET или первый)
     try:
-        year = int(year)
-        month = int(month)
+        current_report_id = int(request.GET.get('report_id', reports[0]['id']))
     except (ValueError, TypeError):
-        year = current_year
-        month = current_month
+        current_report_id = reports[0]['id']
     
-    # ФИЛЬТРАЦИЯ ПО РОЛИ
-    # Для врача: force его man_id
-    # Для заведующего: из параметров или None
-    if is_manager:
-        man_id_param = request.GET.get('man_id', '').strip()
-        man_id = int(man_id_param) if man_id_param else None
-    else:
-        man_id = doctor_man_id  # Автоматически для врача
+    # Находим текущий отчет в списке
+    current_report = None
+    for r in reports:
+        if r['id'] == current_report_id:
+            current_report = r
+            break
     
-    specid_param = request.GET.get('specid', '').strip()
+    if not current_report:
+        current_report = reports[0]
+        current_report_id = reports[0]['id']
     
-    specid = int(specid_param) if specid_param else None
-    stat_purpose_codes = request.GET.getlist('stat_purpose_codes')  # для множественного выбора
+    # 3. Получаем настройки фильтров для текущего отчета
+    with connection.cursor() as cursor:
+        cursor.execute("""
+            SELECT 
+                ft.filter_code,
+                ft.display_name,
+                ft.sql_query,
+                ft.value_field,
+                ft.text_field,
+                ft.ui_element,
+                ft.input_type,
+                ft.min_value,
+                ft.max_value,
+                ft.is_multiple,
+                ft.is_optional,
+                rf.param_name,
+                rf.default_value,
+                rf.is_required
+            FROM kpi.report_filters rf
+            JOIN kpi.filter_types ft ON rf.filter_type_id = ft.id
+            WHERE rf.report_id = %s
+            ORDER BY rf.display_order
+        """, [current_report_id])
+        
+        filters_config = cursor.fetchall()
     
-    # Очищаем от пустых значений
-    stat_purpose_codes = [code for code in stat_purpose_codes if code and code.strip()]
-
-    if not stat_purpose_codes or stat_purpose_codes == ['']:
-        stat_purpose_codes = None
+    # 4. Собираем данные для фильтров
+    filters_for_template = []
     
-    # Вызов хранимой процедуры
-    columns = []
+    for fc in filters_config:
+        filter_info = {
+            'code': fc[0],           # filter_code
+            'name': fc[1],            # display_name
+            'ui_element': fc[5],      # ui_element
+            'input_type': fc[6],      # input_type
+            'min': fc[7],             # min_value
+            'max': fc[8],             # max_value
+            'multiple': fc[9],        # is_multiple
+            'optional': fc[10],       # is_optional
+            'param_name': fc[11],     # param_name
+            'default': fc[12],        # default_value
+            'required': fc[13],       # is_required
+            'options': []              # варианты для select/checkbox
+        }
+        
+        # Если это фильтр со списком значений
+        if fc[2] and fc[2].strip():
+            try:
+                with connection.cursor() as cursor2:
+                    cursor2.execute(fc[2])
+                    filter_info['options'] = [
+                        {'value': row[0], 'text': row[1]}
+                        for row in cursor2.fetchall()
+                    ]
+            except Exception as e:
+                print(f"Ошибка при загрузке фильтра {fc[0]}: {e}")
+                filter_info['options'] = []
+        
+        filters_for_template.append(filter_info)
+    
+    # === НОВАЯ ЧАСТЬ: ВЫЗОВ SQL ФУНКЦИИ ===
     data = []
+    columns = []
     
     try:
+        # Собираем значения фильтров из GET
+        filter_values = {}
+        for fc in filters_config:
+            param_name = fc[11]  # param_name (p_year, p_month и т.д.)
+            filter_code = fc[0]   # filter_code (year, month и т.д.)
+            is_multiple = fc[9]    # is_multiple
+            
+            if is_multiple:
+                values = request.GET.getlist(filter_code)
+                if values:
+                    filter_values[param_name] = values
+            else:
+                value = request.GET.get(filter_code)
+                if value:
+                    filter_values[param_name] = value
+        
+        # Если есть год и месяц в фильтрах, убедимся что они есть
+        # (на случай если пользователь ничего не выбрал)
+        if 'year' in [fc[0] for fc in filters_config] and 'p_year' not in filter_values:
+            filter_values['p_year'] = datetime.now().year
+        if 'month' in [fc[0] for fc in filters_config] and 'p_month' not in filter_values:
+            filter_values['p_month'] = datetime.now().month
+        
+        # Преобразуем в JSON
+        filter_json = json.dumps(filter_values, ensure_ascii=False)
+                
+        # Вызываем функцию
         with connection.cursor() as cursor:
-            query = "SELECT * FROM kpi.get_monthly_plan_fact_comparison(%s, %s, %s, %s, %s)"
-            
-            purpose_param = stat_purpose_codes if stat_purpose_codes and stat_purpose_codes != [''] else None
-            
-            cursor.execute(query, [year, month, man_id, specid, purpose_param])
+            cursor.execute(
+                f"SELECT * FROM {current_report['func']}(%s)",
+                [filter_json]
+            )
             
             if cursor.description:
                 columns = [col[0] for col in cursor.description]
-                results = cursor.fetchall()
-            
-            # Преобразуем в словари
-            for row in results:
-                row_dict = {}
-                for i, value in enumerate(row):
-                    col_name = columns[i] if i < len(columns) else f'col_{i}'
-                    row_dict[col_name] = value
-                data.append(row_dict)
-                
-    except Exception as e:
-        print(f"❌ Ошибка SQL: {e}")
-    
-    # ДАННЫЕ ДЛЯ ФИЛЬТРОВ (напрямую из БД)
-    doctors_data = []
-    specializations_data = []
-    purposes_data = []
-    
-    # Врачи: ТОЛЬКО для заведующих
-    if is_manager:
-        try:
-            with connection.cursor() as cursor:
-                cursor.execute("""
-                    SELECT manidmis, text 
-                    FROM solution_med.import_man 
-                    WHERE text IS NOT NULL 
-                    ORDER BY text
-                """)
                 for row in cursor.fetchall():
-                    doctors_data.append({
-                        'id': row[0],
-                        'name': row[1]
-                    })
-        except Exception:
-            pass
+                    row_dict = {}
+                    for i, col in enumerate(columns):
+                        row_dict[col] = row[i]
+                    data.append(row_dict)
     
-    # Специальности: для всех
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute("""
-                SELECT keyidmis, text, code 
-                FROM kpi.specialities 
-                ORDER BY text
-            """)
-            for row in cursor.fetchall():
-                specializations_data.append({
-                    'id': row[0],
-                    'name': f"{row[1]} "
-                })
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"Ошибка при выполнении SQL функции: {e}")
+        import traceback
+        traceback.print_exc()
+    # ======================================
     
-    # Цели: для всех
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute("""
-                SELECT DISTINCT stat_purpose_code, stat_purpose_name
-                FROM kpi.stat_purpose_mapping
-                ORDER BY stat_purpose_name
-            """)
-            for row in cursor.fetchall():
-                purposes_data.append({
-                    'id': row[0],
-                    'name': f"{row[1]}"
-                })
-    except Exception:
-        pass
-    
-    # КОНТЕКСТ
+    # 5. Контекст для шаблона
     context = {
-        # Основные данные
-        'year': year,
-        'month': month,
+        'reports': reports,
+        'current_report_id': current_report_id,
+        'current_report': current_report,
+        'filters': filters_for_template,
         'columns': columns,
         'data': data,
-        'total': len(data),
-
-        # Информация о пользователе
-        'is_doctor_user': not is_manager,
         'current_user': user,
-
-        # Если нужно передать имя врача для отображения
-        'doctor_name': doctor_name if not is_manager else None,
-        'doctor_id': doctor_man_id if not is_manager else None,
-        
-
-        # Фильтры
-        'form_filters': {
-            'man_id': str(man_id) if man_id else '',
-            'specid': str(specid) if specid else '',
-            'stat_purpose_codes': stat_purpose_codes if stat_purpose_codes else [], 
-        },
-
-        # Фильтры
-        'doctors': doctors_data,
-        'specializations': specializations_data,
-        'purposes': purposes_data,
-        
-        # Списки
+        'is_doctor_user': not (user.is_accountant() or user.is_superuser),
         'months': get_months_from_db(),
         'years': range(2025, datetime.now().year + 2),
-        
-        # Заголовок страницы
-        'page_title': 'Сравнение план-факт' if is_manager else 'Мои показатели',
     }
     
     return render(request, 'dashboard/dynamic_comparison.html', context)
@@ -298,3 +294,106 @@ def smart_redirect(request):
         # Врачи → на единую страницу (их данные)
         from django.shortcuts import redirect
         return redirect('plan_fact')
+
+def get_report_config(request):
+    """Получить конфигурацию фильтров для отчета"""
+    report_id = request.GET.get('report_id')
+    
+    with connection.cursor() as cursor:
+        cursor.execute("""
+            SELECT 
+                ft.filter_code,
+                ft.display_name,
+                ft.ui_element,
+                ft.input_type,
+                ft.min_value,
+                ft.max_value,
+                ft.is_multiple,
+                ft.is_optional,
+                COALESCE(
+                    (SELECT json_agg(json_build_object('value', value_field, 'text', text_field))
+                     FROM (SELECT value_field, text_field FROM ... WHERE filter_type_id = ft.id) as opts),
+                    '[]'::json
+                ) as options
+            FROM kpi.report_filters rf
+            JOIN kpi.filter_types ft ON rf.filter_type_id = ft.id
+            WHERE rf.report_id = %s
+            ORDER BY rf.display_order
+        """, [report_id])
+        
+        filters = []
+        for row in cursor.fetchall():
+            filters.append({
+                'code': row[0],
+                'name': row[1],
+                'ui_element': row[2],
+                'input_type': row[3],
+                'min': row[4],
+                'max': row[5],
+                'multiple': row[6],
+                'optional': row[7],
+                'options': row[8] or []
+            })
+    
+    return JsonResponse({'filters': filters})
+
+def get_report_data(request):
+    """API для получения данных отчета"""
+    try:
+        report_id = request.GET.get('report_id')
+        
+        # Получаем функцию отчета из БД
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT sql_function_name 
+                FROM kpi.reports 
+                WHERE id = %s
+            """, [report_id])
+            result = cursor.fetchone()
+            if not result:
+                return JsonResponse({'success': False, 'error': 'Отчет не найден'})
+            
+            func_name = result[0]
+        
+        # Собираем все параметры из GET в JSON
+        params = {}
+        for key, value in request.GET.items():
+            if key != 'report_id':
+                # Проверяем, может ли это быть массивом
+                if key in request.GET.getlist(key) and len(request.GET.getlist(key)) > 1:
+                    params[key] = request.GET.getlist(key)
+                else:
+                    params[key] = value
+        
+        # Вызываем функцию
+        with connection.cursor() as cursor:
+            cursor.execute(f"SELECT * FROM {func_name}(%s)", [json.dumps(params)])
+            
+            if cursor.description:
+                columns = [col[0] for col in cursor.description]
+                data = []
+                for row in cursor.fetchall():
+                    row_dict = {}
+                    for i, col in enumerate(columns):
+                        row_dict[col] = row[i]
+                    data.append(row_dict)
+                
+                return JsonResponse({
+                    'success': True,
+                    'columns': columns,
+                    'data': data
+                })
+            else:
+                return JsonResponse({
+                    'success': True,
+                    'columns': [],
+                    'data': []
+                })
+                
+    except Exception as e:
+        import traceback
+        print(traceback.format_exc())
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        })

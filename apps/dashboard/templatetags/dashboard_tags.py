@@ -36,3 +36,13 @@ def get_item(value, arg):
         return ''
     except Exception:
         return ''
+
+@register.filter
+def get_list(dict_obj, key):
+    """Получить список значений из QueryDict (для множественного выбора)"""
+    try:
+        if hasattr(dict_obj, 'getlist'):
+            return dict_obj.getlist(key, [])
+        return []
+    except Exception:
+        return []
