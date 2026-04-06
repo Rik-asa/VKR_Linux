@@ -54,7 +54,8 @@ if IS_CONFIGURED:
     'users.apps.UsersConfig',
     'dashboard',
     'plans',
-    'setup',  # ← ТОЛЬКО ОДИН РАЗ!
+    'setup',
+    'references.apps.ReferencesConfig',
     
     # Сторонние
     'rest_framework',
