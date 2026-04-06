@@ -49,31 +49,29 @@
                     {% if top_doctors %}
                     <div class="row">
                         {% for doctor in top_doctors %}
-                        <div class="col-md-4 col-sm-6 col-12 mb-3">
-                            <div class="card h-100">
-                                <div class="card-body">
-                                    <div class="d-flex flex-column h-100">
-                                        <h6 class="card-title">{{ doctor.0|default:"Неизвестно" }}</h6>
-                                        <div class="d-flex align-items-center">
-                                            <div class="flex-grow-1">
-                                                <small class="text-muted d-block">{{ doctor.1|default:"Специальность не указана" }}</small>
-                                            </div>
-                                            <div class="d-flex justify-content-between align-items-center flex-shrink-0">
-                                                <div class=" w-100 text-end">
-                                                    {% if doctor.2 >= 90 %}
-                                                        <span class="badge bg-success fs-6">{{ doctor.2|floatformat:1 }}%</span>
-                                                    {% elif doctor.2 >= 70 %}
-                                                        <span class="badge bg-warning fs-6">{{ doctor.2|floatformat:1 }}%</span>
-                                                    {% else %}
-                                                        <span class="badge bg-danger fs-6">{{ doctor.2|floatformat:1 }}%</span>
-                                                    {% endif %}
+                            <div class="col-md-4 col-sm-6 col-12 mb-3">
+                                <div class="card h-100">
+                                    <div class="card-body">
+                                        <div class="d-flex flex-column h-100">
+                                            <h6 class="card-title">{{ doctor.name|default:"Неизвестно" }}</h6>
+                                            <div class="d-flex align-items-center">
+                                                <div class="flex-grow-1">
+                                                    <small class="text-muted d-block">{{ doctor.specialization|default:"Специальность не указана" }}</small>
+                                                </div>
+                                                <div class="d-flex justify-content-between align-items-center flex-shrink-0">
+                                                    <div class="w-100 text-end">
+                                                        {% if doctor.color %}
+                                                            <span class="badge fs-6" style="background-color: {{ doctor.color }};">{{ doctor.percentage|floatformat:1 }}%</span>
+                                                        {% else %}
+                                                            <span class="badge bg-secondary fs-6">{{ doctor.percentage|floatformat:1 }}%</span>
+                                                        {% endif %}
+                                                    </div>
                                                 </div>
                                             </div>
                                         </div>
                                     </div>
                                 </div>
                             </div>
-                        </div>
                         {% endfor %}
                     </div>
                     {% else %}
@@ -119,19 +117,17 @@
                             <tbody>
                                 {% for stat in specialization_stats %}
                                 <tr>
-                                    <td>{{ stat.0|default:"Не указана" }}</td>
-                                    <td class="text-center">{{ stat.1|default:0 }}</td>
+                                    <td>{{ stat.name|default:"Не указана" }}</td>
+                                    <td class="text-center">{{ stat.doctor_count|default:0 }}</td>
                                     <td class="text-center">
-                                        {% if stat.2 >= 90 %}
-                                            <span class="badge bg-success">{{ stat.2|floatformat:1 }}%</span>
-                                        {% elif stat.2 >= 70 %}
-                                            <span class="badge bg-warning">{{ stat.2|floatformat:1 }}%</span>
+                                        {% if stat.color %}
+                                            <span class="badge" style="background-color: {{ stat.color }};">{{ stat.percentage|floatformat:1 }}%</span>
                                         {% else %}
-                                            <span class="badge bg-danger">{{ stat.2|floatformat:1 }}%</span>
+                                            <span class="badge bg-secondary">{{ stat.percentage|floatformat:1 }}%</span>
                                         {% endif %}
                                     </td>
-                                    <td class="text-end">{{ stat.3|floatformat:0|default:0 }}</td>
-                                    <td class="text-end">{{ stat.4|default:0 }}</td>
+                                    <td class="text-end">{{ stat.total_plan|floatformat:0|default:0 }}</td>
+                                    <td class="text-end">{{ stat.total_fact|default:0 }}</td>
                                 </tr>
                                 {% endfor %}
                             </tbody>

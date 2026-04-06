@@ -33,6 +33,10 @@ def dashboard_home(request):
     specialization_stats = []
     
     # Получаем топ-5 врачей по выполнению плана
+    # Загружаем правила для цветов один раз
+    
+    from apps.core.db_utils import get_all_active_rules, get_color_for_percentage
+    color_rules = get_all_active_rules()
     try:
         with connection.cursor() as cursor:
             query = """
@@ -40,18 +44,24 @@ def dashboard_home(request):
                     doctor_name,
                     specialization,
                     avg_percentage
-                FROM kpi.get_top_doctors(%s, %s, 5)
+                FROM kpi.get_top_doctors(%s, %s, 6)
             """
             cursor.execute(query, [year, month])
             results = cursor.fetchall()
 
             # Преобразуем результаты в список кортежей
             for row in results:
-                # row = (doctor_name, specialization, avg_percentage)
                 doctor_name = row[0] if row[0] else None
                 specialization = row[1] if row[1] else None
                 avg_percentage = float(row[2]) if row[2] is not None else 0.0
-                top_doctors.append((doctor_name, specialization, avg_percentage))
+                color = get_color_for_percentage(avg_percentage, color_rules)
+
+                top_doctors.append({
+                    'name': doctor_name,
+                    'specialization': specialization,
+                    'percentage': avg_percentage,
+                    'color': color
+                })
                 
     except Exception as e:
         print(f"Ошибка при получении топ-врачей: {e}")
@@ -78,7 +88,16 @@ def dashboard_home(request):
                 avg_percentage = float(row[2]) if row[2] is not None else 0.0
                 total_plan = float(row[3]) if row[3] is not None else 0.0
                 total_fact = row[4] if row[4] is not None else 0
-                specialization_stats.append((specialization, doctor_count, avg_percentage, total_plan, total_fact))
+                color = get_color_for_percentage(avg_percentage, color_rules)
+
+                specialization_stats.append({
+                    'name': specialization,
+                    'doctor_count': doctor_count,
+                    'percentage': avg_percentage,
+                    'total_plan': total_plan,
+                    'total_fact': total_fact,
+                    'color': color
+                })
                 
     except Exception as e:
         print(f"Ошибка при получении статистики по специальностям: {e}")
