@@ -317,9 +317,9 @@ def smart_redirect(request):
     
     # Определяем куда отправлять
     if request.user.is_accountant() or request.user.is_superuser:
-        # Заведующие/админы → на dashboard_home
+        # Заведующие/админы → на новый динамический дашборд
         from django.shortcuts import redirect
-        return redirect('dashboard_home')
+        return redirect('dynamic_dashboard')
     else:
         # Врачи → на единую страницу (их данные)
         from django.shortcuts import redirect
@@ -427,3 +427,116 @@ def get_report_data(request):
             'success': False,
             'error': str(e)
         })
+
+
+def dynamic_dashboard(request):
+    """Новый динамический дашборд (настраивается через БД)"""
+    from django.db import connection
+    from datetime import datetime
+    import json
+    
+    # Если не заведующий и не админ - редирект на данные врача
+    if not (request.user.is_accountant() or request.user.is_superuser):
+        return redirect('plan_fact')
+    
+    # Получаем активный дашборд
+    with connection.cursor() as cursor:
+        cursor.execute("""
+            SELECT id, code, name
+            FROM kpi.dashboards
+            WHERE is_active = true
+            ORDER BY sort_order
+            LIMIT 1
+        """)
+        dashboard = cursor.fetchone()
+    
+    if not dashboard:
+        return render(request, 'dashboard/access_denied.html', {
+            'message': 'Дашборд не настроен. Обратитесь к администратору.'
+        })
+    
+    dashboard_id, dashboard_code, dashboard_name = dashboard
+    
+    # Получаем виджеты дашборда
+    with connection.cursor() as cursor:
+        cursor.execute("""
+            SELECT code, name, widget_type, chart_type,
+                   sql_function_name, sql_params,
+                   x_field, y_field, limit_records, width, height
+            FROM kpi.dashboard_widgets
+            WHERE dashboard_id = %s
+            ORDER BY sort_order
+        """, [dashboard_id])
+        widgets = cursor.fetchall()
+    
+    # Параметры из GET
+    p_year = request.GET.get('year', datetime.now().year)
+    p_month = request.GET.get('month', datetime.now().month)
+    
+    try:
+        p_year = int(p_year)
+        p_month = int(p_month)
+    except:
+        p_year = datetime.now().year
+        p_month = datetime.now().month
+    
+    widgets_data = []
+    for widget in widgets:
+        (code, name, widget_type, chart_type,
+         sql_function_name, sql_params,
+         x_field, y_field, limit_records, width, height) = widget
+        
+        params = json.loads(sql_params) if sql_params else {}
+        params['p_year'] = p_year
+        params['p_month'] = p_month
+        
+        data = []
+        try:
+            params_json = json.dumps(params)
+            with connection.cursor() as cursor:
+                cursor.execute(f"SELECT * FROM {sql_function_name}(%s)", [params_json])
+                columns = [col[0] for col in cursor.description]
+                for row in cursor.fetchall():
+                    data.append(dict(zip(columns, row)))
+                if limit_records and limit_records > 0:
+                    data = data[:limit_records]
+        except Exception as e:
+            print(f"Ошибка виджета {code}: {e}")
+            data = []
+        
+        labels = []
+        values = []
+        if data and x_field and y_field:
+            labels = [str(row.get(x_field, '')) for row in data]
+            values = [float(row.get(y_field, 0)) for row in data]
+        
+        widgets_data.append({
+            'code': code,
+            'name': name,
+            'type': widget_type,
+            'chart_type': chart_type,
+            'width': width or 6,
+            'height': height or 400,
+            'data': data,
+            'labels': json.dumps(labels),
+            'values': json.dumps(values),
+        })
+    
+    # Месяцы для фильтра
+    months = []
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT month_number, name FROM kpi.months ORDER BY month_number")
+        months = cursor.fetchall()
+    
+    years = range(2024, datetime.now().year + 2)
+    
+    context = {
+        'widgets': widgets_data,
+        'year': p_year,
+        'month': p_month,
+        'months': months,
+        'years': years,
+        'current_user': request.user,
+    }
+    
+    return render(request, 'dashboard/dashboard_dynamic.html', context)

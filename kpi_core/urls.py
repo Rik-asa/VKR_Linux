@@ -9,6 +9,7 @@ from apps.dashboard.views import (
     dashboard_home, # главная для заведующих
     unified_plan_fact, # единая страница план-факт
     smart_redirect, # умный редирект
+    dynamic_dashboard,
 )
 
 urlpatterns = [
@@ -30,6 +31,8 @@ urlpatterns = [
         path('', dashboard_home, name='dashboard_home'),
         # Единая страница сравнения план-факт
         path('plan-fact/', unified_plan_fact, name='plan_fact'),
+        # Новый динамический дашборд
+        path('dynamic/', dynamic_dashboard, name='dynamic_dashboard'),
     ])),
 
     # Настройка БД
