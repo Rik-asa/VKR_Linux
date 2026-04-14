@@ -172,3 +172,11 @@ if IS_CONFIGURED:
             'rest_framework.permissions.IsAuthenticated',
         ]
     }
+
+# Кэширование
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',  # самый простой, в памяти
+        'TIMEOUT': 300,  # 5 минут
+    }
+}

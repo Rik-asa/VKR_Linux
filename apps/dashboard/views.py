@@ -8,6 +8,7 @@ from django.utils import timezone
 from datetime import datetime
 from apps.core.db_utils import get_months_from_db, get_month_name
 from django.http import JsonResponse
+from django.core.cache import cache
 
 @login_required
 def dashboard_home(request):
@@ -479,48 +480,69 @@ def dynamic_dashboard(request):
     except:
         p_year = datetime.now().year
         p_month = datetime.now().month
+
+    # Получаем дату последней синхронизации
+    last_sync = None
+    with connection.cursor() as cursor:
+        cursor.execute("""
+            select solution_med.import_date()
+        """)
+        row = cursor.fetchone()
+        if row and row[0]:
+            last_sync = row[0]
     
-    widgets_data = []
-    for widget in widgets:
-        (code, name, widget_type, chart_type,
-         sql_function_name, sql_params,
-         x_field, y_field, limit_records, width, height) = widget
-        
-        params = json.loads(sql_params) if sql_params else {}
-        params['p_year'] = p_year
-        params['p_month'] = p_month
-        
-        data = []
-        try:
-            params_json = json.dumps(params)
-            with connection.cursor() as cursor:
-                cursor.execute(f"SELECT * FROM {sql_function_name}(%s)", [params_json])
-                columns = [col[0] for col in cursor.description]
-                for row in cursor.fetchall():
-                    data.append(dict(zip(columns, row)))
-                if limit_records and limit_records > 0:
-                    data = data[:limit_records]
-        except Exception as e:
-            print(f"Ошибка виджета {code}: {e}")
+    # Создаём ключ для кэша (зависит от пользователя, года, месяца)
+    cache_key = f'dashboard_{request.user.pk}_{p_year}_{p_month}'
+    
+    # Пробуем получить данные из кэша
+    widgets_data = cache.get(cache_key)
+
+    if widgets_data is None:
+
+        widgets_data = []
+        for widget in widgets:
+            (code, name, widget_type, chart_type,
+            sql_function_name, sql_params,
+            x_field, y_field, limit_records, width, height) = widget
+            
+            params = json.loads(sql_params) if sql_params else {}
+            params['p_year'] = p_year
+            params['p_month'] = p_month
+            
             data = []
+            try:
+                params_json = json.dumps(params)
+                with connection.cursor() as cursor:
+                    cursor.execute(f"SELECT * FROM {sql_function_name}(%s)", [params_json])
+                    columns = [col[0] for col in cursor.description]
+                    for row in cursor.fetchall():
+                        data.append(dict(zip(columns, row)))
+                    if limit_records and limit_records > 0:
+                        data = data[:limit_records]
+            except Exception as e:
+                print(f"Ошибка виджета {code}: {e}")
+                data = []
+            
+            labels = []
+            values = []
+            if data and x_field and y_field:
+                labels = [str(row.get(x_field, '')) for row in data]
+                values = [float(row.get(y_field, 0)) for row in data]
+            
+            widgets_data.append({
+                'code': code,
+                'name': name,
+                'type': widget_type,
+                'chart_type': chart_type,
+                'width': width or 6,
+                'height': height or 400,
+                'data': data,
+                'labels': json.dumps(labels),
+                'values': json.dumps(values),
+            })
         
-        labels = []
-        values = []
-        if data and x_field and y_field:
-            labels = [str(row.get(x_field, '')) for row in data]
-            values = [float(row.get(y_field, 0)) for row in data]
-        
-        widgets_data.append({
-            'code': code,
-            'name': name,
-            'type': widget_type,
-            'chart_type': chart_type,
-            'width': width or 6,
-            'height': height or 400,
-            'data': data,
-            'labels': json.dumps(labels),
-            'values': json.dumps(values),
-        })
+        # Сохраняем в кэш на 5 минут
+        cache.set(cache_key, widgets_data, 300)
     
     # Месяцы для фильтра
     months = []
@@ -537,6 +559,7 @@ def dynamic_dashboard(request):
         'months': months,
         'years': years,
         'current_user': request.user,
+        'last_sync': last_sync,
     }
     
     return render(request, 'dashboard/dashboard_dynamic.html', context)
