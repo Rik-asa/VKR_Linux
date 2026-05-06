@@ -566,14 +566,14 @@ def dynamic_dashboard(request):
     
     return render(request, 'dashboard/dashboard_dynamic.html', context)
 
-@csrf_exempt
-def export_current_table_excel(request):
-    """Экспорт текущей таблицы (данные уже загружены на страницу)"""
+def export_current_table_ods(request):
+    """Экспорт текущей таблицы в ODS с автошириной колонок"""
     import json
-    from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill, Alignment
-    from openpyxl.utils import get_column_letter
     from datetime import datetime
+    from odf.opendocument import OpenDocumentSpreadsheet
+    from odf.table import Table, TableRow, TableCell, TableColumn
+    from odf.text import P
+    from odf.style import Style, TextProperties, ParagraphProperties, TableCellProperties, TableColumnProperties
     
     if request.method != 'POST':
         return JsonResponse({'success': False, 'error': 'Только POST'})
@@ -583,49 +583,117 @@ def export_current_table_excel(request):
         headers = body.get('headers', [])
         data = body.get('data', [])
         report_name = body.get('report_name', 'Отчет')
+        max_lengths = body.get('max_lengths', [])
         
-        wb = Workbook()
-        ws = wb.active
-        ws.title = report_name[:31]
+        if not data or not headers:
+            return JsonResponse({'success': False, 'error': 'Нет данных для экспорта'})
         
-        # Стили заголовков
-        header_font = Font(bold=True, color="FFFFFF")
-        header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+        # Если max_lengths не переданы, рассчитываем по заголовкам
+        if not max_lengths:
+            max_lengths = [len(str(h)) for h in headers]
+        
+        doc = OpenDocumentSpreadsheet()
+        border = "0.5pt solid #000000"
+        
+        # Функция конвертации длины в сантиметры
+        def length_to_cm(char_length):
+            if char_length <= 10:
+                return 2.26
+            else:
+                width = char_length * 0.18
+                return min(10.0, width)
+        
+        # Стиль для заголовков
+        header_style = Style(name="HeaderStyle", family="table-cell")
+        header_style.addElement(TextProperties(fontweight="bold", color="#ffffff", fontfamily="Times New Roman"))
+        header_style.addElement(ParagraphProperties(textalign="center"))
+        header_style.addElement(TableCellProperties(backgroundcolor="#366092", wrapoption="wrap", verticalalign="middle", border=border))
+        doc.automaticstyles.addElement(header_style)
+        
+        # Стиль для чисел
+        number_style = Style(name="NumberStyle", family="table-cell")
+        number_style.addElement(TextProperties(fontfamily="Times New Roman"))
+        number_style.addElement(ParagraphProperties(textalign="end"))
+        number_style.addElement(TableCellProperties(wrapoption="wrap", verticalalign="middle", border=border))
+        doc.automaticstyles.addElement(number_style)
+        
+        # Стиль для текста
+        text_style = Style(name="TextStyle", family="table-cell")
+        text_style.addElement(TextProperties(fontfamily="Times New Roman"))
+        text_style.addElement(ParagraphProperties(textalign="start"))
+        text_style.addElement(TableCellProperties(wrapoption="wrap", verticalalign="middle", border=border))
+        doc.automaticstyles.addElement(text_style)
+        
+        # Создаем таблицу
+        table = Table(name=report_name[:31])
+        
+        # Устанавливаем ширину колонок на основе максимальной длины
+        for idx, (header, max_len) in enumerate(zip(headers, max_lengths)):
+            width_cm = length_to_cm(max_len)
+            
+            col_style = Style(name=f"col_{idx}", family="table-column")
+            col_style.addElement(TableColumnProperties(columnwidth=f"{width_cm}cm"))
+            doc.automaticstyles.addElement(col_style)
+            col = TableColumn(stylename=col_style)
+            table.addElement(col)
+        
+        # Функция для проверки, является ли значение числом
+        def is_numeric(value):
+            if value is None or value == '':
+                return False
+            try:
+                float(str(value).replace(',', '.'))
+                return True
+            except ValueError:
+                return False
         
         # Заголовки
-        for col_idx, header in enumerate(headers, 1):
-            cell = ws.cell(row=1, column=col_idx, value=header)
-            cell.font = header_font
-            cell.fill = header_fill
-            cell.alignment = Alignment(horizontal="center")
+        header_row = TableRow()
+        for header in headers:
+            cell = TableCell(stylename=header_style)
+            cell.addElement(P(text=str(header)))
+            header_row.addElement(cell)
+        table.addElement(header_row)
         
         # Данные
-        for row_idx, row in enumerate(data, 2):
-            for col_idx, header in enumerate(headers, 1):
-                value = row.get(header, '')
-                cell = ws.cell(row=row_idx, column=col_idx, value=value)
-                cell.alignment = Alignment(horizontal="left")
+        for row_data in data:
+            table_row = TableRow()
+            for header in headers:
+                value = row_data.get(header, '')
+                
+                if is_numeric(value):
+                    cell_style = number_style
+                    try:
+                        num = float(str(value).replace(',', '.'))
+                        if num.is_integer():
+                            display_value = str(int(num))
+                        else:
+                            display_value = str(round(num, 2)).replace('.', ',')
+                    except:
+                        display_value = str(value)
+                else:
+                    cell_style = text_style
+                    display_value = str(value) if value else ''
+                
+                cell = TableCell(stylename=cell_style)
+                cell.addElement(P(text=display_value))
+                table_row.addElement(cell)
+            table.addElement(table_row)
         
-        # Ширина колонок
-        for col_idx, header in enumerate(headers, 1):
-            max_len = len(header)
-            for row_idx in range(2, min(len(data) + 2, 100)):
-                cell_val = ws.cell(row=row_idx, column=col_idx).value
-                if cell_val:
-                    max_len = max(max_len, len(str(cell_val)))
-            ws.column_dimensions[get_column_letter(col_idx)].width = min(max_len + 3, 50)
-        
-        ws.freeze_panes = 'A2'
+        doc.spreadsheet.addElement(table)
         
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = f"{report_name}_{timestamp}.xlsx"
+        safe_name = ''.join(c for c in report_name if c.isalnum() or c in '._- ')[:50]
+        filename = f"{safe_name}_{timestamp}.ods"
         
         response = HttpResponse(
-            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            content_type='application/vnd.oasis.opendocument.spreadsheet'
         )
         response['Content-Disposition'] = f'attachment; filename="{filename}"'
-        wb.save(response)
+        doc.save(response)
         return response
         
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return JsonResponse({'success': False, 'error': str(e)})

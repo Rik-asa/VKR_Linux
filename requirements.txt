@@ -9,4 +9,3 @@ django-environ
 whitenoise
 celery
 redis
-openpyxl
