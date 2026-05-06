@@ -1,3 +1,5 @@
+#requirements.txt
+
 Django
 psycopg2-binary
 djangorestframework
@@ -7,3 +9,4 @@ django-environ
 whitenoise
 celery
 redis
+openpyxl

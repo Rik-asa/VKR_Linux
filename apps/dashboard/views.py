@@ -7,8 +7,10 @@ from django.db import connection
 from django.utils import timezone
 from datetime import datetime
 from apps.core.db_utils import get_months_from_db, get_month_name
-from django.http import JsonResponse
+from django.http import JsonResponse, HttpResponse
 from django.core.cache import cache
+from django.views.decorators.csrf import csrf_exempt
+
 
 @login_required
 def dashboard_home(request):
@@ -563,3 +565,67 @@ def dynamic_dashboard(request):
     }
     
     return render(request, 'dashboard/dashboard_dynamic.html', context)
+
+@csrf_exempt
+def export_current_table_excel(request):
+    """Экспорт текущей таблицы (данные уже загружены на страницу)"""
+    import json
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+    from datetime import datetime
+    
+    if request.method != 'POST':
+        return JsonResponse({'success': False, 'error': 'Только POST'})
+    
+    try:
+        body = json.loads(request.body)
+        headers = body.get('headers', [])
+        data = body.get('data', [])
+        report_name = body.get('report_name', 'Отчет')
+        
+        wb = Workbook()
+        ws = wb.active
+        ws.title = report_name[:31]
+        
+        # Стили заголовков
+        header_font = Font(bold=True, color="FFFFFF")
+        header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+        
+        # Заголовки
+        for col_idx, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col_idx, value=header)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center")
+        
+        # Данные
+        for row_idx, row in enumerate(data, 2):
+            for col_idx, header in enumerate(headers, 1):
+                value = row.get(header, '')
+                cell = ws.cell(row=row_idx, column=col_idx, value=value)
+                cell.alignment = Alignment(horizontal="left")
+        
+        # Ширина колонок
+        for col_idx, header in enumerate(headers, 1):
+            max_len = len(header)
+            for row_idx in range(2, min(len(data) + 2, 100)):
+                cell_val = ws.cell(row=row_idx, column=col_idx).value
+                if cell_val:
+                    max_len = max(max_len, len(str(cell_val)))
+            ws.column_dimensions[get_column_letter(col_idx)].width = min(max_len + 3, 50)
+        
+        ws.freeze_panes = 'A2'
+        
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"{report_name}_{timestamp}.xlsx"
+        
+        response = HttpResponse(
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        wb.save(response)
+        return response
+        
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': str(e)})

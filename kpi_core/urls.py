@@ -10,6 +10,7 @@ from apps.dashboard.views import (
     unified_plan_fact, # единая страница план-факт
     smart_redirect, # умный редирект
     dynamic_dashboard,
+    export_current_table_excel,
 )
 
 urlpatterns = [
@@ -33,6 +34,8 @@ urlpatterns = [
         path('plan-fact/', unified_plan_fact, name='plan_fact'),
         # Новый динамический дашборд
         path('dynamic/', dynamic_dashboard, name='dynamic_dashboard'),
+        #Выгрузка
+        path('export-excel/', export_current_table_excel, name='export_current_table_excel'),
     ])),
 
     # Настройка БД

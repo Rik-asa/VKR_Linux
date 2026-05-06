@@ -102,6 +102,10 @@
                         <a href="?report_id={{ current_report_id }}" class="btn btn-secondary">
                             <i class="fas fa-redo"></i> Сбросить
                         </a>
+                        <!-- Кнопка экспорта в Excel -->
+                        <button type="button" class="btn btn-success" id="exportExcelBtn">
+                            <i class="fas fa-file-excel"></i> Выгрузить Excel
+                        </button>
                     </div>
                 </div>
             </form>
@@ -150,4 +154,87 @@
     .form-select, .form-control { font-size: 0.85rem; }
 }
 </style>
+
+<script>
+document.getElementById('exportExcelBtn').addEventListener('click', function() {
+    // Проверяем, есть ли данные
+    const table = document.querySelector('.table');
+    if (!table) {
+        alert('Нет данных для экспорта');
+        return;
+    }
+    
+    // Собираем заголовки
+    const headers = [];
+    document.querySelectorAll('.table thead th').forEach(th => {
+        headers.push(th.innerText);
+    });
+    
+    // Собираем данные
+    const data = [];
+    document.querySelectorAll('.table tbody tr').forEach(row => {
+        const rowData = {};
+        const cells = row.querySelectorAll('td');
+        headers.forEach((header, idx) => {
+            rowData[header] = cells[idx] ? cells[idx].innerText : '';
+        });
+        data.push(rowData);
+    });
+    
+    if (data.length === 0) {
+        alert('Нет данных для экспорта');
+        return;
+    }
+    
+    // Получаем CSRF токен
+    const csrftoken = document.querySelector('[name=csrfmiddlewaretoken]');
+    let token = '';
+    if (csrftoken) {
+        token = csrftoken.value;
+    } else {
+        // Ищем в cookies
+        const cookies = document.cookie.split(';');
+        for (let cookie of cookies) {
+            if (cookie.trim().startsWith('csrftoken=')) {
+                token = cookie.trim().substring(10);
+                break;
+            }
+        }
+    }
+    
+    // Отправляем на сервер
+    fetch('{% url "export_current_table_excel" %}', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': token
+        },
+        body: JSON.stringify({
+            headers: headers,
+            data: data,
+            report_name: '{{ current_report.name }}'
+        })
+    })
+    .then(response => {
+        if (response.ok && response.headers.get('Content-Type') === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') {
+            return response.blob();
+        }
+        return response.text().then(text => { throw new Error('Ошибка сервера'); });
+    })
+    .then(blob => {
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = '{{ current_report.name }}.xlsx';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+    })
+    .catch(error => {
+        alert('Ошибка: ' + error.message);
+    });
+});
+</script>
+
 {% endblock %}
