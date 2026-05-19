@@ -64,6 +64,16 @@ def get_all_active_rules():
             })
         return rules
 
+def get_cached_rules():
+    """
+    Получает правила из performance_grades с кэшированием на 10 минут
+    """
+    cache_key = 'performance_grades_rules'
+    rules = cache.get(cache_key)
+    if rules is None:
+        rules = get_all_active_rules()
+        cache.set(cache_key, rules, 600)  # 600 секунд = 10 минут
+    return rules
 
 def get_color_for_percentage(percentage, rules_cache=None):
     """
@@ -74,7 +84,7 @@ def get_color_for_percentage(percentage, rules_cache=None):
         return None
     
     if rules_cache is None:
-        rules_cache = get_all_active_rules()
+        rules_cache = get_cached_rules()
     
     for rule in rules_cache:
         min_p = rule['min_percent']

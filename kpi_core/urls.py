@@ -4,6 +4,8 @@ from django.contrib import admin
 from django.urls import path, include
 from django.contrib.auth import views as auth_views
 from django.shortcuts import redirect
+from django.conf import settings
+from django.conf.urls.static import static
 
 from apps.dashboard.views import (
     dashboard_home, # главная для заведующих
@@ -44,3 +46,6 @@ urlpatterns = [
     # Прямой путь для админки
     path('admin/setup/', lambda request: redirect('/setup/'), name='admin_database_setup'),
 ]
+
+# ДЛЯ РАЗДАЧИ СТАТИКИ (CSS, JS) В РЕЖИМЕ DEBUG=False
+urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)

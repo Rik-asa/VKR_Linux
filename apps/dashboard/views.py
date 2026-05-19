@@ -198,12 +198,40 @@ def unified_plan_fact(request):
         
         filters_config = cursor.fetchall()
     
+    def evaluate_default(value):
+        """Пытается выполнить значение как SQL, если не получается - возвращает как строку"""
+        if not value or not isinstance(value, str):
+            return value
+        
+        clean_value = value.strip()
+        
+        # Пробуем выполнить как SQL
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(clean_value)
+                row = cursor.fetchone()
+                if row and row[0] is not None:
+                    result = str(row[0])
+                    return result
+                return None
+        except Exception as e:
+            # Если не SQL или ошибка - возвращаем как есть
+            return clean_value
+
+    # === ВЫЧИСЛЯЕМ ВСЕ DEFAULT_VALUE ОДИН РАЗ ===
+    defaults_cache = {}
+    for fc in filters_config:
+        filter_code = fc[0]
+        default_value = fc[12]
+        defaults_cache[filter_code] = evaluate_default(default_value) if default_value else None
+    
     # 4. Собираем данные для фильтров (для шаблона)
     filters_for_template = []
     
     for fc in filters_config:
+        filter_code = fc[0]
         filter_info = {
-            'code': fc[0],           # filter_code
+            'code': filter_code,      # filter_code
             'name': fc[1],            # display_name
             'ui_element': fc[5],      # ui_element
             'input_type': fc[6],      # input_type
@@ -212,11 +240,11 @@ def unified_plan_fact(request):
             'multiple': fc[9],        # is_multiple
             'optional': fc[10],       # is_optional
             'param_name': fc[11],     # param_name
-            'default': fc[12],        # default_value
+            'default': defaults_cache.get(filter_code),        # default_value
             'required': fc[13],       # is_required
             'options': []              # варианты для select/checkbox
         }
-        
+
         # Если это фильтр со списком значений
         if fc[2] and fc[2].strip():
             try:
@@ -227,7 +255,6 @@ def unified_plan_fact(request):
                         for row in cursor2.fetchall()
                     ]
             except Exception as e:
-                print(f"Ошибка при загрузке фильтра {fc[0]}: {e}")
                 filter_info['options'] = []
         
         filters_for_template.append(filter_info)
@@ -239,15 +266,22 @@ def unified_plan_fact(request):
         param_name = fc[11]  # param_name (p_year, p_month и т.д.)
         filter_code = fc[0]   # filter_code (year, month и т.д.)
         is_multiple = fc[9]    # is_multiple
+        default_value = fc[12]   # default_value
+        is_required = fc[13]     # is_required
+        evaluated_default = defaults_cache.get(filter_code)
         
         if is_multiple:
             values = request.GET.getlist(filter_code)
             if values:
                 filter_values[param_name] = values
+            elif evaluated_default and is_required:
+                filter_values[param_name] = [evaluated_default]
         else:
             value = request.GET.get(filter_code)
             if value:
                 filter_values[param_name] = value
+            elif evaluated_default and is_required:
+                filter_values[param_name] = evaluated_default
     
     # Если пользователь - врач (не заведующий и не суперюзер)
     if not (user.is_accountant() or user.is_superuser):
@@ -257,13 +291,7 @@ def unified_plan_fact(request):
         if has_doctor_filter and user.manid:
             # Принудительно подставляем ID врача
             filter_values['p_man_id'] = user.manid
-    
-    # Если есть год и месяц в фильтрах, убедимся что они есть
-    if 'year' in [fc[0] for fc in filters_config] and 'p_year' not in filter_values:
-        filter_values['p_year'] = datetime.now().year
-    if 'month' in [fc[0] for fc in filters_config] and 'p_month' not in filter_values:
-        filter_values['p_month'] = datetime.now().month
-    
+
     # === ВЫЗОВ SQL ФУНКЦИИ ===
     data = []
     columns = []
@@ -286,11 +314,23 @@ def unified_plan_fact(request):
                     for i, col in enumerate(columns):
                         row_dict[col] = row[i]
                     data.append(row_dict)
-    
+
     except Exception as e:
         import traceback
         traceback.print_exc()
     
+    # Получаем дату последней синхронизации (как в dynamic_dashboard)
+    last_sync = None
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT solution_med.import_date()")
+            row = cursor.fetchone()
+            if row and row[0]:
+                last_sync = row[0]
+    except Exception as e:
+        print(f"Ошибка получения даты синхронизации: {e}")
+        last_sync = None
+
     # 5. Контекст для шаблона
     context = {
         'reports': reports,
@@ -303,6 +343,7 @@ def unified_plan_fact(request):
         'is_doctor_user': not (user.is_accountant() or user.is_superuser),
         'months': get_months_from_db(),
         'years': range(2025, datetime.now().year + 2),
+        'last_sync': last_sync,
     }
     
     return render(request, 'dashboard/dynamic_comparison.html', context)

@@ -45,12 +45,14 @@
                                     <select name="{{ filter.code }}" class="form-select form-select-sm">
                                         <option value="">Все</option>
                                         {% for option in filter.options %}
-                                            {% if option.text %}
-                                                <option value="{{ option.value }}" 
-                                                    {% if request.GET|get_item:filter.code == option.value|stringformat:"s" %}selected{% endif %}>
-                                                    {{ option.text }}
-                                                </option>
-                                            {% endif %}
+                                            <option value="{{ option.value }}"
+                                                {% if request.GET|get_item:filter.code == option.value|stringformat:"s" %}
+                                                    selected
+                                                {% elif not request.GET|get_item:filter.code and filter.default == option.value|stringformat:"s" %}
+                                                    selected
+                                                {% endif %}>
+                                                {{ option.text }}
+                                            </option>
                                         {% endfor %}
                                     </select>
                                     
@@ -124,17 +126,27 @@
                         <thead class="table-light" style="position: sticky; top: 0; background: #f8f9fa; z-index: 1;">
                             <tr>
                                 {% for column in columns %}
-                                    <th>{{ column }}</th>
+                                    {% if column|is_percentage_column %}
+                                        <th style="background-color: #e8e8e8;">{{ column }}</th>
+                                    {% else %}
+                                        <th>{{ column }}</th>
+                                    {% endif %}
                                 {% endfor %}
                             </tr>
                         </thead>
                         <tbody>
                             {% for row in data %}
-                                <tr>
-                                    {% for column in columns %}
+                            <tr>
+                                {% for column in columns %}
+                                    {% if column|is_percentage_column %}
+                                        <td {{ row|get_item:column|percentage_color|safe }}>
+                                            {{ row|get_item:column }}
+                                        </td>
+                                    {% else %}
                                         <td>{{ row|get_item:column }}</td>
-                                    {% endfor %}
-                                </tr>
+                                    {% endif %}
+                                {% endfor %}
+                            </tr>
                             {% endfor %}
                         </tbody>
                     </table>

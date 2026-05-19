@@ -1,6 +1,7 @@
 # apps/dashboard/templatetags/dashboard_tags.py
 
 from django import template
+from apps.core.db_utils import get_cached_rules, get_color_for_percentage
 
 register = template.Library()
 
@@ -46,3 +47,46 @@ def get_list(dict_obj, key):
         return []
     except Exception:
         return []
+
+# Список ключевых слов, по которым определяем, что колонка содержит проценты
+PERCENTAGE_KEYWORDS = ['%', 'процент', 'percentage', 'percent', 'выполнения']
+
+@register.filter
+def is_percentage_column(column_name):
+    """
+    Определяет, является ли колонка процентной по её названию
+    Использование: {% if column|is_percentage_column %}
+    """
+    if not column_name:
+        return False
+    column_lower = str(column_name).lower()
+    return any(keyword in column_lower for keyword in PERCENTAGE_KEYWORDS)
+
+@register.filter
+def percentage_color(value):
+    """
+    Возвращает CSS-стиль для цвета текста на основе процента
+    Использование: {{ value|percentage_color|safe }}
+    """
+    if value is None or value == '':
+        return ''
+    
+    try:
+        # Пробуем преобразовать в число
+        if isinstance(value, (int, float)):
+            pct = float(value)
+        else:
+            # Убираем знак процента если есть и преобразуем
+            cleaned = str(value).replace('%', '').replace(',', '.').strip()
+            if not cleaned:
+                return ''
+            pct = float(cleaned)
+        
+        # Получаем цвет из правил (теперь с кэшем!)
+        color = get_color_for_percentage(pct)
+        
+        if color:
+            return f'style="color: {color}; font-weight: bold;"'
+        return ''
+    except (ValueError, TypeError, AttributeError):
+        return ''
