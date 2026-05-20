@@ -9,6 +9,7 @@ from django.urls import path
 from django.http import HttpResponse
 import csv
 import io
+from apps.core.admin_mixins import SmartSearchMixin
 
 # ==================== МОДЕЛЬ ====================
 from django.db import models
@@ -84,11 +85,20 @@ class StatPlanForm(forms.ModelForm):
 
 # ==================== АДМИНКА ====================
 @admin.register(StatPlan)
-class StatPlanAdmin(admin.ModelAdmin):
+class StatPlanAdmin(SmartSearchMixin, admin.ModelAdmin):
     form = StatPlanForm
     list_display = ['year', 'get_spec_name', 'get_purpose_name', 'plan_value']
     list_filter = ['year']
+
     search_fields = ['specid', 'stat_purpose_code']
+    
+    search_related_tables = {
+        'specid': ('kpi.specialities', 'text', 'keyidmis'),
+        'stat_purpose_code': ('kpi.stat_purpose_mapping', 'stat_purpose_name', 'stat_purpose_code'),
+    }
+
+    auto_search_all_text_fields = True
+    
     list_editable = ['plan_value']
     actions = ['export_as_csv']
 
